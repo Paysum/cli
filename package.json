@@ -1,0 +1,26 @@
+{
+  "name": "@paysum_io/cli",
+  "version": "1.0.0",
+  "description": "Develop Paysum storefront themes locally: pull, push, live preview and publish.",
+  "type": "module",
+  "bin": {
+    "paysum": "bin/paysum.js"
+  },
+  "files": ["bin", "src"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Paysum/cli.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": ["paysum", "theme", "storefront", "cli"],
+  "license": "MIT"
+}
