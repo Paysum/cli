@@ -2,7 +2,14 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ApiError, createClient } from './api.js'
-import { DEFAULT_API, readCredentials, removeLogin, resolveAuth, saveLogin } from './config.js'
+import {
+  DEFAULT_API,
+  readCredentials,
+  removeLogin,
+  resolveAuth,
+  saveLogin,
+  writeCredentials,
+} from './config.js'
 import {
   findProject,
   isThemePath,
@@ -17,6 +24,7 @@ import {
   writeProject,
   writeState,
 } from './project.js'
+import { starterFiles, themeProblems } from './starter.js'
 import * as ui from './ui.js'
 
 const { c, symbols } = ui
@@ -58,10 +66,13 @@ export function explain(error) {
 }
 
 function session(flags, project = null) {
+  if (flags.store && project?.config.store && flags.store !== project.config.store)
+    throw new CliError('This folder belongs to a different store.')
   const auth = resolveAuth({
     key: flags.key,
     api: flags.api ?? project?.config.api,
-    storeId: project?.config.store,
+    storeId: flags.store ?? project?.config.store,
+    savedOnly: flags.store !== undefined,
   })
   if (!auth) {
     throw new CliError(
@@ -81,10 +92,13 @@ export async function themePort(flags, args) {
     throw new CliError('The input must be a non-empty ZIP of at most 1.5 MiB.')
 
   const { client } = session(flags, findProject())
-  const { archive_base64: archive, ...result } = await client.portTheme(
-    fs.readFileSync(input).toString('base64'),
-    flags.out !== undefined,
-  )
+  const { archive_base64: archive, ...result } = await client
+    .portTheme(fs.readFileSync(input).toString('base64'), flags.out !== undefined)
+    .catch((error) => {
+      if (error instanceof ApiError && error.status === 404 && error.code === 'not_found')
+        throw new CliError('Theme conversion is not available on this Paysum API yet.')
+      throw error
+    })
   if (flags.out !== undefined) {
     if (typeof archive !== 'string' || !archive)
       throw new CliError('The API did not return a converted ZIP.')
@@ -160,7 +174,7 @@ export async function logout(flags) {
   const credentials = readCredentials()
   const project = findProject()
   const id = flags.store || project?.config.store || credentials.current
-  if (!id || !credentials.stores[id]) {
+  if (!id || !Object.hasOwn(credentials.stores, id)) {
     ui.line()
     ui.line('You are not signed in.')
     ui.line()
@@ -170,6 +184,30 @@ export async function logout(flags) {
   ui.line()
   ui.success(`Signed out of ${c.bold(removed.name)}. The key itself still works until you revoke it.`)
   ui.line()
+}
+
+export function stores() {
+  const credentials = readCredentials()
+  const entries = Object.entries(credentials.stores)
+  if (!entries.length) {
+    ui.hint('No saved stores. Run `paysum login` to add one.')
+    return
+  }
+  ui.table([
+    ['STORE', 'ID', ''],
+    ...entries.map(([id, store]) => [store.name, id, id === credentials.current ? 'default' : '']),
+  ])
+}
+
+export function use(_flags, args) {
+  const [id] = args
+  if (args.length !== 1) throw new CliError('Provide one store ID from `paysum stores`.')
+  const credentials = readCredentials()
+  if (!Object.hasOwn(credentials.stores, id))
+    throw new CliError('No saved key for that store. Run `paysum login` to add one.')
+  credentials.current = id
+  writeCredentials(credentials)
+  ui.success(`Default store: ${credentials.stores[id].name}. Theme folders keep their own store.`)
 }
 
 export async function whoami(flags) {
@@ -195,6 +233,13 @@ export async function whoami(flags) {
   ui.line()
 }
 
+function projectDestination(target) {
+  const root = path.resolve(target)
+  if (findProject(path.dirname(root)))
+    throw new CliError('Choose a folder outside the existing theme project.')
+  return root
+}
+
 export async function init(flags, [target]) {
   const { client, api } = session(flags)
   const spin = ui.spinner('Downloading theme')
@@ -205,7 +250,7 @@ export async function init(flags, [target]) {
   } finally {
     spin.stop()
   }
-  const root = path.resolve(target || store.slug || 'paysum-theme')
+  const root = projectDestination(target || store.slug || 'paysum-theme')
   if (fs.existsSync(root) && fs.readdirSync(root).length && !flags.force)
     throw new CliError(
       `${path.relative(process.cwd(), root) || '.'} is not empty.`,
@@ -241,6 +286,56 @@ export async function init(flags, [target]) {
   ui.line(`  paysum watch     ${c.gray('live preview while you edit')}`)
   ui.line(`  paysum publish   ${c.gray('make it live')}`)
   ui.line()
+}
+
+export async function create(flags, args) {
+  if (args.length > 1) throw new CliError('Provide one folder for the starter theme.')
+  const name = flags.name?.trim() || (args[0] ? path.basename(path.resolve(args[0])) : 'Starter')
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 63)
+  if (!slug) throw new CliError('Use a theme name with at least one letter or number.')
+  const root = projectDestination(args[0] || slug)
+  if (fs.existsSync(root)) throw new CliError('The folder already exists. Choose a new folder.')
+  if (!fs.existsSync(path.dirname(root))) throw new CliError('The parent folder must exist.')
+  const { client, api } = session(flags)
+  const store = await client.store()
+  fs.mkdirSync(root)
+  for (const [relative, content] of Object.entries(starterFiles(name, slug))) {
+    writeLocalFile(root, relative, content)
+  }
+  writeProject(root, {
+    store: store.id,
+    name: store.name,
+    ...(api === DEFAULT_API ? {} : { api }),
+  })
+  fs.writeFileSync(path.join(root, '.gitignore'), '.paysum/\nnode_modules/\n')
+  ui.success(`Created ${name} in ${path.relative(process.cwd(), root)}. No drafts changed.`)
+  ui.hint('Run `paysum check` in the new folder, then `paysum push --dry-run` to see conflicts.')
+}
+
+export async function files(flags) {
+  if (flags.remote) {
+    const project = findProject()
+    const { client } = session(flags, project)
+    if (project) assertSameStore(project, await client.store())
+    const theme = await client.files(false)
+    ui.heading('Remote files', theme.source.replace(/_/g, ' '))
+    for (const file of theme.files.map(({ path }) => path).sort()) ui.line(file)
+    return
+  }
+  const { files: local, oversized } = scanLocal(requireProject().root)
+  for (const file of Object.keys(local).sort()) ui.line(file)
+  for (const file of oversized.sort()) ui.warn(`${file} exceeds the upload limit`)
+}
+
+export function check() {
+  const { files: local, oversized } = scanLocal(requireProject().root)
+  const problems = [
+    ...oversized.map((file) => `${file} exceeds the upload limit`),
+    ...themeProblems(local),
+  ]
+  if (problems.length) throw new CliError(problems.join('\n'))
+  ui.success('Theme files and manifest passed local checks.')
+  ui.hint('Use `paysum preview` to check how saved drafts render.')
 }
 
 export async function pull(flags) {
@@ -306,6 +401,7 @@ export async function status() {
 async function pushChanges(project, client, flags, { quiet = false } = {}) {
   const { files: local, oversized } = scanLocal(project.root)
   const state = readState(project.root)
+  for (const file of oversized) if (state[file]) local[file] = { hash: state[file] }
   const theme = await client.files(false)
   const remote = remoteHashes(theme.files)
   const plan = planPush(local, state, flags.force ? null : remote)
@@ -319,6 +415,12 @@ async function pushChanges(project, client, flags, { quiet = false } = {}) {
     )
   }
   for (const file of oversized) ui.warn(`${file} is over 512 KB and was skipped`)
+  if (flags['dry-run']) {
+    for (const file of plan.upload) ui.line(`Upload  ${file}`)
+    for (const file of plan.remove) ui.line(`Delete  ${file}`)
+    ui.success('Dry run complete. No drafts or local sync state changed.')
+    return
+  }
   if (!plan.upload.length && !plan.remove.length) {
     writeState(project.root, state)
     if (!quiet) ui.success('Nothing to push')
@@ -351,7 +453,7 @@ export async function push(flags) {
   assertSameStore(project, await client.store())
   ui.line()
   await pushChanges(project, client, flags)
-  ui.hint('Drafts are saved. Run `paysum publish` to make them live.')
+  if (!flags['dry-run']) ui.hint('Drafts are saved. Run `paysum publish` to make them live.')
   ui.line()
 }
 

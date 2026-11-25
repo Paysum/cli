@@ -46,13 +46,14 @@ export function removeLogin(storeId) {
   return removed
 }
 
-export function resolveAuth({ key, api, storeId } = {}) {
+export function resolveAuth({ key, api, storeId, savedOnly = false } = {}) {
   const envKey = process.env.PAYSUM_API_KEY
   const envApi = process.env.PAYSUM_API_URL
-  if (key || envKey) return { key: key || envKey, api: api || envApi || DEFAULT_API, storeId }
+  if (!savedOnly && (key || envKey))
+    return { key: key || envKey, api: api || envApi || DEFAULT_API, storeId }
   const credentials = readCredentials()
   const id = storeId || credentials.current
-  const saved = id ? credentials.stores[id] : null
+  const saved = id && Object.hasOwn(credentials.stores, id) ? credentials.stores[id] : null
   if (!saved) return null
   return { key: saved.key, api: api || envApi || saved.api || DEFAULT_API, storeId: id, saved }
 }

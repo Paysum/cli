@@ -24,6 +24,28 @@ paysum watch --open
 
 `paysum watch` uploads drafts. Use `paysum publish` when you want to make the changes live.
 
+## Commands
+
+| Task | Command |
+| --- | --- |
+| List saved stores or set the default | `paysum stores`, `paysum use <store-id>` |
+| Start a new Liquid theme locally | `paysum create my-theme --name "My Theme"` |
+| Download your existing theme | `paysum init my-theme` |
+| List local files or saved drafts | `paysum files`, `paysum files --remote` |
+| Check local file sizes, required files, and the manifest | `paysum check` |
+| Check sync changes and conflicts without uploading | `paysum push --dry-run` |
+| Sync drafts | `paysum pull`, `paysum push` |
+| Preview and publish | `paysum preview --open`, `paysum watch --open`, `paysum publish` |
+| List published versions | `paysum versions` |
+
+Use `--store <id>` to select a saved store for a command. A theme folder stays linked to its own store. `paysum apply` is an alias for `paysum publish`.
+
+`paysum create` does not create a new theme slot on the server or change drafts. To develop against drafts, run `paysum push --dry-run` first. Existing draft paths can conflict with the starter. `paysum check` does not render Liquid; use the draft preview to check rendering.
+
+## SellAuth Import
+
+`theme-port` is not yet available on the production Paysum API. It requires a server that supports theme conversion.
+
 To convert a SellAuth theme ZIP without changing your storefront, use a key with `themes:read`:
 
 ```sh
