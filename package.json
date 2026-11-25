@@ -1,6 +1,6 @@
 {
   "name": "@paysum_io/cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Develop Paysum storefront themes locally: pull, push, live preview and publish.",
   "type": "module",
   "bin": {

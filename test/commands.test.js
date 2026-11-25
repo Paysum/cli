@@ -21,7 +21,13 @@ test('select a saved store, scaffold and check a theme, and plan a push without 
     hits.push([request.method, request.url, request.headers.authorization])
     response.setHeader('Content-Type', 'application/json')
     if (request.url === '/api/store-api/store') {
-      response.end(JSON.stringify({ id: 'store-b', name: 'Second store' }))
+      response.end(JSON.stringify({
+        id: 'store-b',
+        name: 'Second store',
+        slug: 'second',
+        url: 'https://second.mypaysum.io',
+        api_key: { permissions: ['store:read'] },
+      }))
     } else if (request.url === '/api/store-api/theme/files?content=false') {
       response.end(JSON.stringify({
         source: 'template_files',
@@ -47,6 +53,7 @@ test('select a saved store, scaffold and check a theme, and plan a push without 
   const cli = (args, root = cwd, extraEnv = {}) =>
     exec(process.execPath, [bin, ...args], { cwd: root, env: { ...env, ...extraEnv } })
   assert.match((await cli(['list-ids'])).stdout, /store-a\s+default/)
+  await assert.rejects(cli(['login']), /Browser sign-in needs an interactive terminal/)
   await cli(['use', 'store-b'])
   assert.match((await cli(['stores'])).stdout, /store-b\s+default/)
   await cli(['create', 'work', '--name', 'My Theme', '--store', 'store-b'], cwd, {
@@ -74,6 +81,7 @@ test('select a saved store, scaffold and check a theme, and plan a push without 
   assert.doesNotMatch(stdout, /Delete\s+assets\/oversized\.css/)
   assert.equal(fs.readFileSync(statePath, 'utf8'), state)
   await assert.rejects(cli(['apply', '--dry-run'], root), /only available on paysum push/)
+  assert.match((await cli(['login', '--key', 'sk_second', '--api', api])).stdout, /Signed in to Second store/)
   assert.ok(hits.length)
   assert.ok(hits.every(([method, , authorization]) => method === 'GET' && authorization === 'Bearer sk_second'))
 })

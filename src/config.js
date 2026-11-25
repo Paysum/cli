@@ -4,7 +4,7 @@ import path from 'node:path'
 
 export const DEFAULT_API = 'https://paysum.io'
 
-function configDir() {
+export function configDir() {
   if (process.env.PAYSUM_CONFIG_DIR) return process.env.PAYSUM_CONFIG_DIR
   if (process.platform === 'win32' && process.env.APPDATA)
     return path.join(process.env.APPDATA, 'paysum')

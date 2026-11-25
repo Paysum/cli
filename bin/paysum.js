@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util'
 import { VERSION } from '../src/api.js'
 import * as commands from '../src/commands.js'
 import { c, fail, line } from '../src/ui.js'
+import { checkForUpdate } from '../src/update.js'
 
 const BANNER = [
   '██████╗  █████╗ ██╗   ██╗███████╗██╗   ██╗███╗   ███╗     ██████╗██╗     ██╗',
@@ -15,7 +16,7 @@ const BANNER = [
 
 const GROUPS = {
   Stores: {
-    login: { run: commands.login, summary: 'Save a store API key' },
+    login: { run: commands.login, summary: 'Sign in with your browser or an API key' },
     logout: { run: commands.logout, summary: 'Remove a saved store key' },
     stores: { run: commands.stores, summary: 'List saved store IDs' },
     use: { run: commands.use, summary: 'Set the default store', args: '<store-id>' },
@@ -37,6 +38,7 @@ const GROUPS = {
     publish: { run: commands.publish, summary: 'Publish drafts (alias: apply)' },
     versions: { run: commands.versions, summary: 'List published versions' },
     open: { run: commands.open, summary: 'Open the live storefront' },
+    update: { run: commands.update, summary: 'Install the latest CLI release (--check to check only)' },
   },
 }
 
@@ -47,6 +49,8 @@ const ALIASES = Object.assign(Object.create(null), {
 
 const OPTIONS = {
   key: { type: 'string' },
+  'api-key': { type: 'boolean' },
+  check: { type: 'boolean' },
   api: { type: 'string' },
   store: { type: 'string' },
   name: { type: 'string' },
@@ -82,6 +86,7 @@ function help() {
   }
   line(c.bold('Options'))
   helpRow('--key <sk_...>', 'Use this key instead of PAYSUM_API_KEY or your saved key')
+  helpRow('--api-key', 'Prompt for a key instead of opening the browser (login)')
   helpRow('--api <url>', 'API origin (default https://paysum.io)')
   helpRow('--store <id>', 'Use the saved key for this store')
   helpRow('--name <name>', 'Name the local theme created by create')
@@ -128,7 +133,10 @@ async function main() {
     fail(`Unknown command: ${name}`, 'Run `paysum --help` to see every command.')
     return 2
   }
-  for (const [option, expected] of [['dry-run', 'push'], ['remote', 'files'], ['name', 'create']]) {
+  for (const [option, expected] of [
+    ['dry-run', 'push'], ['remote', 'files'], ['name', 'create'], ['api-key', 'login'],
+    ['check', 'update'],
+  ]) {
     if (flags[option] !== undefined && canonical !== expected) {
       fail(`--${option} is only available on paysum ${expected}.`)
       return 2
@@ -140,6 +148,7 @@ async function main() {
   }
   try {
     await command.run(flags, rest)
+    if (canonical !== 'update') await checkForUpdate()
     return 0
   } catch (error) {
     const reason = commands.explain(error)

@@ -1,4 +1,6 @@
-const VERSION = '1.0.0'
+import { createRequire } from 'node:module'
+
+const { version: VERSION } = createRequire(import.meta.url)('../package.json')
 
 export class ApiError extends Error {
   constructor(status, code, message) {

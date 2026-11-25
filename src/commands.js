@@ -10,6 +10,7 @@ import {
   saveLogin,
   writeCredentials,
 } from './config.js'
+import { browserLogin, browserLoginAvailable } from './oauth.js'
 import {
   findProject,
   isThemePath,
@@ -26,6 +27,7 @@ import {
 } from './project.js'
 import { starterFiles, themeProblems } from './starter.js'
 import * as ui from './ui.js'
+import { installUpdate, latestVersion, releaseArchive } from './update.js'
 
 const { c, symbols } = ui
 
@@ -44,10 +46,10 @@ function openUrl(url) {
     process.platform === 'darwin'
       ? ['open', [url]]
       : process.platform === 'win32'
-        ? ['cmd', ['/c', 'start', '', url]]
+        ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]]
         : ['xdg-open', [url]]
   try {
-    spawn(command, args, { stdio: 'ignore', detached: true }).unref()
+    spawn(command, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
   } catch {
   }
 }
@@ -55,7 +57,7 @@ function openUrl(url) {
 export function explain(error) {
   if (!(error instanceof ApiError)) return error
   if (error.status === 401)
-    return new CliError(error.message, 'Run `paysum login` with a valid API key.')
+    return new CliError(error.message, 'Run `paysum login` again, or pass a valid API key.')
   if (error.status === 403)
     return new CliError(
       error.message,
@@ -134,40 +136,83 @@ const remoteHashes = (files) => Object.fromEntries(files.map((file) => [file.pat
 
 export async function login(flags) {
   ui.heading('Paysum', 'sign in')
+  const api = flags.api || process.env.PAYSUM_API_URL || DEFAULT_API
   let key = flags.key || process.env.PAYSUM_API_KEY
-  if (!key) {
+  let store
+  let permissions
+  let useBrowser = !key && !flags['api-key']
+  if (useBrowser && !ui.isInteractive())
+    throw new CliError('Browser sign-in needs an interactive terminal.', 'Set PAYSUM_API_KEY for scripts.')
+  if (useBrowser && !(await browserLoginAvailable(api))) {
+    ui.line('Browser sign-in is not available on this API yet. Use a store API key.')
+    useBrowser = false
+  }
+  if (!useBrowser && !key) {
     ui.hint('Create a key in Dashboard → Developers → API keys.')
     ui.hint('Give it themes:write to push and publish, or store:read to look around.')
     ui.line()
     key = await ui.ask('API key', { secret: true })
   }
-  if (!key?.startsWith('sk_'))
-    throw new CliError('That does not look like an API key.', 'Keys start with sk_.')
-  const api = flags.api || process.env.PAYSUM_API_URL || DEFAULT_API
-  const spin = ui.spinner('Checking key')
-  let store
-  try {
-    store = await createClient({ key, api }).store()
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 403)
-      throw new CliError(
-        'The key works, but it cannot read store details.',
-        'Add the store:read scope (or any :write scope) to the key.',
-      )
-    throw error
-  } finally {
-    spin.stop()
+  if (useBrowser) {
+    ;({ key, store, permissions } = await browserLogin({
+      api,
+      dashboard: process.env.PAYSUM_DASHBOARD_URL || 'https://dashboard.paysum.io',
+      onAuthorize: (url) => {
+        ui.line('Choose a store and approve Paysum CLI in your browser.')
+        ui.line('If the browser does not open, visit:')
+        ui.line(url)
+        ui.line()
+        openUrl(url)
+      },
+    }))
+  } else {
+    if (!key?.startsWith('sk_'))
+      throw new CliError('That does not look like an API key.', 'Keys start with sk_.')
+    const spin = ui.spinner('Checking key')
+    try {
+      store = await createClient({ key, api }).store()
+      permissions = store.api_key.permissions
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403)
+        throw new CliError(
+          'The key works, but it cannot read store details.',
+          'Add the store:read scope (or any :write scope) to the key.',
+        )
+      throw error
+    } finally {
+      spin.stop()
+    }
   }
   const file = saveLogin(store, key, api)
   ui.success(`Signed in to ${c.bold(store.name)} ${c.gray(host(store.url))}`)
   ui.line()
   ui.rows([
-    ['Scopes', store.api_key.permissions.join(', ') || 'none'],
+    ['Scopes', permissions.join(', ') || 'none'],
     ['Saved to', file],
   ])
   ui.line()
   ui.hint('Next: `paysum init` downloads the theme into a new folder.')
   ui.line()
+}
+
+export async function update(flags, args) {
+  if (args.length) throw new CliError('Use `paysum update` or `paysum update --check`.')
+  const version = await latestVersion()
+  if (!version) {
+    ui.success('Paysum CLI is up to date.')
+    return
+  }
+  if (flags.check) {
+    ui.line(`Paysum CLI v${version} is available. Run paysum update.`)
+    return
+  }
+  const archive = await releaseArchive(version)
+  if (!installUpdate(archive)) {
+    ui.line('Reinstall with your original package manager using this release archive:')
+    ui.line(archive)
+    return
+  }
+  ui.success(`Updated Paysum CLI to v${version}.`)
 }
 
 export async function logout(flags) {
